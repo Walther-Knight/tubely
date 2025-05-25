@@ -1,10 +1,11 @@
 package main
 
 import (
-	"encoding/base64"
 	"fmt"
 	"io"
 	"net/http"
+	"os"
+	"path/filepath"
 
 	"github.com/bootdotdev/learn-file-storage-s3-golang-starter/internal/auth"
 	//"github.com/bootdotdev/learn-file-storage-s3-golang-starter/internal/database"
@@ -41,14 +42,17 @@ func (cfg *apiConfig) handlerUploadThumbnail(w http.ResponseWriter, r *http.Requ
 		return
 	}
 	defer f.Close()
-	mediaType := fHeader.Header.Get("Content-Type")
-	imageData, err := io.ReadAll(f)
+	fileType := filepath.Ext(fHeader.Filename)
+
+	filePath := filepath.Join(cfg.assetsRoot, videoIDString+fileType)
+	dataTarget, err := os.Create(filePath)
+	defer dataTarget.Close()
 	if err != nil {
-		respondWithError(w, http.StatusBadRequest, "Unable to read form file", err)
+		respondWithError(w, http.StatusBadRequest, "Unable to create file", err)
 		return
 	}
 
-	imageData = []byte(base64.StdEncoding.EncodeToString(imageData))
+	io.Copy(dataTarget, f)
 
 	vidMeta, err := cfg.db.GetVideo(videoID)
 	if err != nil {
@@ -59,6 +63,7 @@ func (cfg *apiConfig) handlerUploadThumbnail(w http.ResponseWriter, r *http.Requ
 		respondWithError(w, http.StatusUnauthorized, "Unauthorized user for video", err)
 	}
 
+	//support for global map
 	//newThumbnail := thumbnail{
 	//	data:      imageData,
 	//	mediaType: mediaType,
@@ -66,7 +71,7 @@ func (cfg *apiConfig) handlerUploadThumbnail(w http.ResponseWriter, r *http.Requ
 
 	//videoThumbnails[videoID] = newThumbnail
 
-	newURL := fmt.Sprintf("data:%s;base64,%s", mediaType, imageData)
+	newURL := fmt.Sprintf("http://localhost:8091/assets/%v%v", videoID, fileType)
 
 	vidMeta.ThumbnailURL = &newURL
 	err = cfg.db.UpdateVideo(vidMeta)
