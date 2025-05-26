@@ -78,6 +78,7 @@ func (cfg *apiConfig) handlerUploadThumbnail(w http.ResponseWriter, r *http.Requ
 	}
 	if userID != vidMeta.UserID {
 		respondWithError(w, http.StatusUnauthorized, "Unauthorized user for video", err)
+		return
 	}
 
 	//support for global map
