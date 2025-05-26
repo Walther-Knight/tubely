@@ -1,13 +1,17 @@
 package main
 
 import (
+	"bytes"
 	"crypto/rand"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"mime"
 	"net/http"
 	"os"
+	"os/exec"
 	"path/filepath"
 
 	"github.com/aws/aws-sdk-go-v2/service/s3"
@@ -83,6 +87,17 @@ func (cfg *apiConfig) handlerUploadVideo(w http.ResponseWriter, r *http.Request)
 	defer vidTemp.Close()
 
 	io.Copy(vidTemp, f)
+	prefix, err := getVideoAspectRatio(vidTemp.Name())
+	if err != nil {
+		respondWithError(w, http.StatusInternalServerError, "Error parsing temp file for aspect ratio", err)
+		return
+	}
+
+	if prefix == "" {
+		return
+	}
+
+	fileName = prefix + "/" + fileName
 	vidTemp.Seek(0, io.SeekStart)
 
 	_, err = cfg.s3Client.PutObject(r.Context(), &s3.PutObjectInput{
@@ -106,4 +121,42 @@ func (cfg *apiConfig) handlerUploadVideo(w http.ResponseWriter, r *http.Request)
 	}
 
 	respondWithJSON(w, http.StatusOK, vidMeta)
+}
+
+func getVideoAspectRatio(filePath string) (string, error) {
+	var bufCmd bytes.Buffer
+	cmdRes := exec.Command("ffprobe", "-v", "error", "-print_format", "json", "-show_streams", filePath)
+	cmdRes.Stdout = &bufCmd
+	err := cmdRes.Run()
+	if err != nil {
+		log.Println(err)
+		return "", nil
+	}
+
+	type SizeCalc struct {
+		Streams []struct {
+			Width  int `json:"width"`
+			Height int `json:"height"`
+		} `json:"streams"`
+	}
+
+	bufContent := bufCmd.Bytes()
+
+	var ResJson SizeCalc
+	err = json.Unmarshal(bufContent, &ResJson)
+	if err != nil {
+
+		log.Printf("Error unmarshalling JSON in video aspect: %v", err)
+		return "", nil
+	}
+
+	if ResJson.Streams[0].Width/ResJson.Streams[0].Height == 1 {
+		return "landscape", nil
+	}
+
+	if ResJson.Streams[0].Width/ResJson.Streams[0].Height == 0 {
+		return "portrait", nil
+	}
+
+	return "other", nil
 }
