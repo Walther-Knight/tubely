@@ -100,11 +100,24 @@ func (cfg *apiConfig) handlerUploadVideo(w http.ResponseWriter, r *http.Request)
 	fileName = prefix + "/" + fileName
 	vidTemp.Seek(0, io.SeekStart)
 
+	procPath, err := processVideoForFastStart(vidTemp.Name())
+	if err != nil {
+		respondWithError(w, http.StatusInternalServerError, "Error processing temp file for fast start", err)
+		return
+	}
+	procVid, err := os.Open(procPath)
+	if err != nil {
+		respondWithError(w, http.StatusInternalServerError, "Error opening temp file for fast start", err)
+		return
+	}
+	defer os.Remove(procPath)
+	defer procVid.Close()
+
 	_, err = cfg.s3Client.PutObject(r.Context(), &s3.PutObjectInput{
 		Bucket:      &cfg.s3Bucket,
 		Key:         &fileName,
 		ContentType: &mediaType,
-		Body:        vidTemp,
+		Body:        procVid,
 	})
 	if err != nil {
 		respondWithError(w, http.StatusInternalServerError, "Unable to PutObject in S3", err)
@@ -130,7 +143,7 @@ func getVideoAspectRatio(filePath string) (string, error) {
 	err := cmdRes.Run()
 	if err != nil {
 		log.Println(err)
-		return "", nil
+		return "", err
 	}
 
 	type SizeCalc struct {
@@ -159,4 +172,15 @@ func getVideoAspectRatio(filePath string) (string, error) {
 	}
 
 	return "other", nil
+}
+
+func processVideoForFastStart(filePath string) (string, error) {
+	outputPath := filePath + ".processing"
+	cmdRes := exec.Command("ffmpeg", "-i", filePath, "-c", "copy", "-movflags", "faststart", "-f", "mp4", outputPath)
+	err := cmdRes.Run()
+	if err != nil {
+		log.Println(err)
+		return "", err
+	}
+	return outputPath, nil
 }
